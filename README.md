@@ -32,6 +32,35 @@ npm run db:validate
 npm run db:generate
 ```
 
+### Convex development deployment
+
+Convex is configured as an additional backend integration. The existing Prisma/PostgreSQL database remains the system of record for the financial model; do not replace its reviewed migrations with an unreviewed Convex schema.
+
+```bash
+npm run convex:dev
+```
+
+This pushes the functions in `convex/` to the selected Convex development deployment and watches for changes. To push once (for example in a setup or CI step), run:
+
+```bash
+npm run convex:push
+```
+
+### Vercel web environment
+
+Deploy `apps/web` as the Vercel project root. Configure these variables in the Vercel project for each applicable environment; `.env.local` is only for local Next.js builds and is intentionally ignored by Git.
+
+```bash
+# A TLS-protected, publicly reachable Fastify API origin. Do not add a trailing slash.
+API_INTERNAL_URL=https://api.example.com
+
+# Public Convex endpoints for the matching Convex deployment, if the web app uses Convex.
+NEXT_PUBLIC_CONVEX_URL=https://<deployment>.convex.cloud
+NEXT_PUBLIC_CONVEX_SITE_URL=https://<deployment>.convex.site
+```
+
+Never add `DATABASE_URL`, session secrets, encryption keys, object-storage credentials, or provider keys to the Vercel web project. Those belong only to the backend runtime. The browser calls relative `/api/*` paths and Next.js rewrites them server-side to `API_INTERNAL_URL`.
+
 ### 2. Apply reviewed migrations
 
 The first migration must be generated/reviewed and committed from the Prisma schema; see [`packages/database/prisma/migrations/README.md`](packages/database/prisma/migrations/README.md). Never use `prisma db push` in staging/production. Apply deploy migrations with a dedicated migration database user.

@@ -1,0 +1,662 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  INVITED
+  ACTIVE
+  SUSPENDED
+  LOCKED
+  DEACTIVATED
+}
+enum GroupStatus {
+  DRAFT
+  READY
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+enum MembershipStatus {
+  ACTIVE
+  LEFT
+  SUSPENDED
+}
+enum FeeStatus {
+  PENDING
+  PAID
+  WAIVED
+}
+enum SavingsStatus {
+  POSTED
+  REVERSED
+}
+enum CashLoanStatus {
+  PENDING
+  VERIFIED
+  ACTIVE
+  PAID
+  OVERDUE
+  FINE_APPLIED
+  SUSPENDED
+  CANCELLED
+}
+enum ItemStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+enum ItemLoanStatus {
+  SELECTED
+  PENDING
+  CLEARED
+  OUTSTANDING
+  CANCELLED
+}
+enum LedgerCategory {
+  REGISTRATION_FEE
+  SAVINGS
+  CASH_LOAN
+  CASH_LOAN_PAYMENT
+  LOAN_FINE
+  ITEM_LOAN
+  ITEM_LOAN_PAYMENT
+  ADJUSTMENT
+}
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+enum SecuritySeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+enum SecurityEventStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  FALSE_POSITIVE
+}
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+enum FilePurpose {
+  PROFILE_PHOTO
+  AGREEMENT
+  REPORT
+  EXPORT
+  OTHER
+}
+enum ReportStatus {
+  REQUESTED
+  PROCESSING
+  READY
+  FAILED
+  EXPIRED
+}
+enum AgreementStatus {
+  DRAFT
+  ISSUED
+  SIGNED
+  SUPERSEDED
+  VOID
+}
+enum ConversationType {
+  MEMBER_GROUP_ADMIN
+  STAFF_DIRECT
+  GROUP_ANNOUNCEMENT
+}
+enum DeliveryStatus {
+  SENT
+  DELIVERED
+  READ
+}
+enum NotificationType {
+  SECURITY
+  LOAN_DUE
+  LOAN_OVERDUE
+  FINE
+  SAVINGS_REMINDER
+  GROUP_ANNOUNCEMENT
+  CHAT
+  SYSTEM
+}
+
+model SystemConfiguration {
+  id                         String   @id @default("global")
+  systemName                 String   @db.VarChar(120)
+  registrationFeeKes         BigInt   @default(200) @db.BigInt
+  maxActiveMembersPerGroup   Int      @default(30)
+  cashLoanSavingsPercent     Int      @default(50)
+  cashLoanRepaymentDays      Int      @default(14)
+  cashLoanFinePercent        Int      @default(1)
+  requireMfaForPrivileged    Boolean  @default(true)
+  updatedAt                  DateTime @updatedAt
+  updatedById                String?
+  createdAt                  DateTime @default(now())
+}
+
+model User {
+  id                 String       @id @default(uuid()) @db.Uuid
+  emailNormalized    String?      @unique @db.VarChar(254)
+  passwordHash       String?      @db.VarChar(255)
+  status             UserStatus   @default(INVITED)
+  forcePasswordChange Boolean     @default(true)
+  loginFailedCount   Int          @default(0)
+  lockedUntil        DateTime?
+  lastLoginAt        DateTime?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  deletedAt          DateTime?
+  roles              UserRole[]
+  memberProfile      MemberProfile?
+  sessions           Session[]
+  mfaFactors         MFAFactor[]
+  loginAttempts      LoginAttempt[]
+  createdInvitations Invitation[] @relation("InvitationCreator")
+  receivedInvitations Invitation[] @relation("InvitationRecipient")
+  groupAssignments   GroupAdminAssignment[]
+  createdGroups      Group[] @relation("GroupCreatedBy")
+  verifiedCashLoans  CashLoan[] @relation("CashLoanVerifier")
+  createdItems       Item[] @relation("ItemCreator")
+  sentMessages       ChatMessage[] @relation("MessageSender")
+  chatParticipants   ChatParticipant[]
+  notifications      Notification[]
+  auditEvents        AuditLog[] @relation("AuditActor")
+  securityEvents     SecurityEvent[] @relation("SecuritySubject")
+  createdFiles       FileAsset[] @relation("FileCreator")
+  signatureEvents    AgreementSignature[] @relation("SignatureActor")
+
+  @@index([status])
+}
+
+model Role {
+  id          String     @id @default(uuid()) @db.Uuid
+  code        String     @unique @db.VarChar(40)
+  description String     @db.VarChar(255)
+  users       UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String     @id @default(uuid()) @db.Uuid
+  code        String     @unique @db.VarChar(100)
+  description String     @db.VarChar(255)
+  roles       RolePermission[]
+}
+
+model UserRole {
+  userId     String   @db.Uuid
+  roleId     String   @db.Uuid
+  assignedAt DateTime @default(now())
+  assignedById String? @db.Uuid
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role       Role     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  @@id([userId, roleId])
+  @@index([roleId])
+}
+
+model RolePermission {
+  roleId       String     @db.Uuid
+  permissionId String     @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  @@id([roleId, permissionId])
+}
+
+model Invitation {
+  id             String           @id @default(uuid()) @db.Uuid
+  userId         String           @db.Uuid
+  tokenHash      String           @unique @db.VarChar(64)
+  status         InvitationStatus @default(PENDING)
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdById    String           @db.Uuid
+  createdAt      DateTime         @default(now())
+  user           User             @relation("InvitationRecipient", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy      User             @relation("InvitationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  @@index([userId, status])
+  @@index([expiresAt])
+}
+
+model MFAFactor {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @db.Uuid
+  kind             String   @db.VarChar(30) // TOTP or WEBAUTHN
+  encryptedSecret  String?  @db.Text
+  publicCredential Json?
+  verifiedAt       DateTime?
+  lastUsedAt       DateTime?
+  createdAt        DateTime @default(now())
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, verifiedAt])
+}
+
+model Session {
+  id              String        @id @default(uuid()) @db.Uuid
+  userId          String        @db.Uuid
+  tokenHash       String        @unique @db.VarChar(64)
+  csrfTokenHash   String        @db.VarChar(64)
+  status          SessionStatus @default(ACTIVE)
+  mfaCompletedAt  DateTime?
+  expiresAt       DateTime
+  lastSeenAt      DateTime      @default(now())
+  ipHash          String?       @db.VarChar(64)
+  userAgentHash   String?       @db.VarChar(64)
+  createdAt       DateTime      @default(now())
+  revokedAt       DateTime?
+  revocationReason String?      @db.VarChar(120)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, status, expiresAt])
+}
+
+model LoginAttempt {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String?  @db.Uuid
+  identifierHash String @db.VarChar(64)
+  success      Boolean
+  failureReason String? @db.VarChar(80)
+  ipHash       String?  @db.VarChar(64)
+  userAgentHash String? @db.VarChar(64)
+  createdAt    DateTime @default(now())
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  @@index([identifierHash, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Group {
+  id                 String      @id @default(uuid()) @db.Uuid
+  name               String      @db.VarChar(120)
+  status             GroupStatus @default(DRAFT)
+  savingsPolicyJson  Json
+  constitutionVersion Int        @default(1)
+  createdById        String      @db.Uuid
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  suspendedAt        DateTime?
+  createdBy          User        @relation("GroupCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships        GroupMembership[]
+  groupAdmins        GroupAdminAssignment[]
+  savingsAccounts    SavingsAccount[]
+  registrationFees   RegistrationFee[]
+  cashLoans          CashLoan[]
+  items              Item[]
+  itemLoans          ItemLoan[]
+  ledgerEntries      FinancialLedgerEntry[]
+  conversations      ChatConversation[]
+  agreements         MemberAgreement[]
+  @@unique([name])
+  @@index([status])
+}
+
+model GroupAdminAssignment {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  groupId      String   @db.Uuid
+  active       Boolean  @default(true)
+  assignedById String?  @db.Uuid
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group        Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  @@unique([userId, groupId])
+  @@index([groupId, active])
+}
+
+model MemberProfile {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @unique @db.Uuid
+  fullName          String   @db.VarChar(160)
+  phoneE164         String?  @unique @db.VarChar(20)
+  memberNumber      String   @unique @db.VarChar(50)
+  registrationDate  DateTime @default(now())
+  profilePhotoFileId String? @db.Uuid
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Restrict)
+  memberships       GroupMembership[]
+  savingsAccounts   SavingsAccount[]
+  registrationFees  RegistrationFee[]
+  cashLoans         CashLoan[]
+  itemLoans         ItemLoan[]
+  agreements        MemberAgreement[]
+}
+
+model GroupMembership {
+  id              String           @id @default(uuid()) @db.Uuid
+  groupId         String           @db.Uuid
+  memberProfileId String           @db.Uuid
+  status          MembershipStatus @default(ACTIVE)
+  joinedAt        DateTime         @default(now())
+  leftAt          DateTime?
+  createdById     String?          @db.Uuid
+  group           Group            @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  member          MemberProfile    @relation(fields: [memberProfileId], references: [id], onDelete: Restrict)
+  @@unique([groupId, memberProfileId])
+  @@index([groupId, status])
+  @@index([memberProfileId, status])
+}
+
+model RegistrationFee {
+  id              String    @id @default(uuid()) @db.Uuid
+  groupId         String    @db.Uuid
+  memberProfileId String    @db.Uuid
+  amountKes       BigInt    @db.BigInt
+  status          FeeStatus @default(PENDING)
+  paidAt          DateTime?
+  recordedById    String?   @db.Uuid
+  createdAt       DateTime  @default(now())
+  group           Group     @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  member          MemberProfile @relation(fields: [memberProfileId], references: [id], onDelete: Restrict)
+  @@unique([groupId, memberProfileId])
+  @@index([groupId, status])
+}
+
+model SavingsAccount {
+  id              String    @id @default(uuid()) @db.Uuid
+  groupId         String    @db.Uuid
+  memberProfileId String    @db.Uuid
+  openedAt        DateTime  @default(now())
+  closedAt        DateTime?
+  group           Group     @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  member          MemberProfile @relation(fields: [memberProfileId], references: [id], onDelete: Restrict)
+  transactions    SavingsTransaction[]
+  @@unique([groupId, memberProfileId])
+  @@index([memberProfileId])
+}
+
+model SavingsTransaction {
+  id                String        @id @default(uuid()) @db.Uuid
+  savingsAccountId  String        @db.Uuid
+  contributionWeek  DateTime      @db.Date
+  amountKes         BigInt        @db.BigInt
+  status            SavingsStatus @default(POSTED)
+  reference         String        @unique @db.VarChar(100)
+  reversalOfId      String?       @unique @db.Uuid
+  recordedById      String?       @db.Uuid
+  createdAt         DateTime      @default(now())
+  savingsAccount    SavingsAccount @relation(fields: [savingsAccountId], references: [id], onDelete: Restrict)
+  @@unique([savingsAccountId, contributionWeek])
+  @@index([createdAt])
+}
+
+model CashLoan {
+  id                String         @id @default(uuid()) @db.Uuid
+  groupId           String         @db.Uuid
+  memberProfileId   String         @db.Uuid
+  principalKes      BigInt         @db.BigInt
+  outstandingKes    BigInt         @db.BigInt
+  issueDate         DateTime?
+  dueDate           DateTime?
+  status            CashLoanStatus @default(PENDING)
+  verificationStatus String        @default("PENDING") @db.VarChar(30)
+  verifiedById      String?        @db.Uuid
+  verifiedAt        DateTime?
+  clearedAt         DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  group             Group          @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  member            MemberProfile  @relation(fields: [memberProfileId], references: [id], onDelete: Restrict)
+  verifiedBy        User?          @relation("CashLoanVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  payments          CashLoanPayment[]
+  fines             LoanFine[]
+  @@index([groupId, status, dueDate])
+  @@index([memberProfileId, status])
+}
+
+model CashLoanPayment {
+  id            String   @id @default(uuid()) @db.Uuid
+  cashLoanId    String   @db.Uuid
+  amountKes     BigInt   @db.BigInt
+  paymentDate   DateTime @default(now())
+  reference     String   @unique @db.VarChar(100)
+  verifiedById  String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  cashLoan      CashLoan @relation(fields: [cashLoanId], references: [id], onDelete: Restrict)
+  @@index([cashLoanId, paymentDate])
+}
+
+model LoanFine {
+  id            String   @id @default(uuid()) @db.Uuid
+  cashLoanId    String   @db.Uuid
+  amountKes     BigInt   @db.BigInt
+  ruleVersion   Int
+  status        FeeStatus @default(PENDING)
+  appliedAt     DateTime @default(now())
+  clearedAt     DateTime?
+  cashLoan      CashLoan @relation(fields: [cashLoanId], references: [id], onDelete: Restrict)
+  @@unique([cashLoanId, ruleVersion])
+  @@index([status])
+}
+
+model Item {
+  id              String     @id @default(uuid()) @db.Uuid
+  groupId         String     @db.Uuid
+  name            String     @db.VarChar(100)
+  description     String?    @db.VarChar(500)
+  priceKes        BigInt     @db.BigInt
+  availableFrom   DateTime   @db.Date
+  availableUntil  DateTime   @db.Date
+  status          ItemStatus @default(DRAFT)
+  createdById     String     @db.Uuid
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+  group           Group      @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  createdBy       User       @relation("ItemCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  loans           ItemLoan[]
+  @@index([groupId, status, availableFrom, availableUntil])
+}
+
+model ItemLoan {
+  id              String         @id @default(uuid()) @db.Uuid
+  groupId         String         @db.Uuid
+  itemId          String         @db.Uuid
+  memberProfileId String         @db.Uuid
+  priceKes        BigInt         @db.BigInt
+  outstandingKes  BigInt         @db.BigInt
+  status          ItemLoanStatus @default(SELECTED)
+  selectedAt      DateTime       @default(now())
+  clearedAt       DateTime?
+  verifierId      String?        @db.Uuid
+  group           Group          @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  item            Item           @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  member          MemberProfile  @relation(fields: [memberProfileId], references: [id], onDelete: Restrict)
+  payments        ItemLoanPayment[]
+  @@index([groupId, status])
+  @@index([memberProfileId, status])
+}
+
+model ItemLoanPayment {
+  id            String   @id @default(uuid()) @db.Uuid
+  itemLoanId    String   @db.Uuid
+  amountKes     BigInt   @db.BigInt
+  paymentDate   DateTime @default(now())
+  reference     String   @unique @db.VarChar(100)
+  verifiedById  String?  @db.Uuid
+  createdAt     DateTime @default(now())
+  itemLoan      ItemLoan @relation(fields: [itemLoanId], references: [id], onDelete: Restrict)
+  @@index([itemLoanId, paymentDate])
+}
+
+model FinancialLedgerEntry {
+  id              String          @id @default(uuid()) @db.Uuid
+  groupId         String          @db.Uuid
+  memberProfileId String?         @db.Uuid
+  category        LedgerCategory
+  direction       LedgerDirection
+  amountKes       BigInt          @db.BigInt
+  referenceType   String          @db.VarChar(50)
+  referenceId     String          @db.Uuid
+  idempotencyKey  String          @unique @db.VarChar(100)
+  reversalOfId    String?         @unique @db.Uuid
+  createdById     String?         @db.Uuid
+  createdAt       DateTime        @default(now())
+  group           Group           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  @@index([groupId, category, createdAt])
+  @@index([memberProfileId, category, createdAt])
+}
+
+model FileAsset {
+  id             String      @id @default(uuid()) @db.Uuid
+  purpose        FilePurpose
+  storageKey     String      @unique @db.VarChar(500)
+  contentHash    String      @db.VarChar(64)
+  contentType    String      @db.VarChar(100)
+  byteSize       Int
+  width          Int?
+  height         Int?
+  createdById    String?     @db.Uuid
+  createdAt      DateTime    @default(now())
+  deletedAt      DateTime?
+  createdBy      User?       @relation("FileCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  agreement      MemberAgreement?
+  @@index([purpose, createdAt])
+}
+
+model MemberAgreement {
+  id              String          @id @default(uuid()) @db.Uuid
+  groupId         String          @db.Uuid
+  memberProfileId String          @db.Uuid
+  fileAssetId     String          @unique @db.Uuid
+  version         Int
+  contentHash     String          @db.VarChar(64)
+  status          AgreementStatus @default(DRAFT)
+  issuedAt        DateTime?
+  signedAt        DateTime?
+  supersedesId    String?         @unique @db.Uuid
+  createdAt       DateTime        @default(now())
+  group           Group           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  member          MemberProfile   @relation(fields: [memberProfileId], references: [id], onDelete: Restrict)
+  fileAsset       FileAsset       @relation(fields: [fileAssetId], references: [id], onDelete: Restrict)
+  signatures      AgreementSignature[]
+  @@unique([memberProfileId, version])
+}
+
+model AgreementSignature {
+  id                 String          @id @default(uuid()) @db.Uuid
+  memberAgreementId  String          @db.Uuid
+  signerUserId       String          @db.Uuid
+  signerRoleSnapshot String          @db.VarChar(40)
+  signedAt           DateTime        @default(now())
+  signatureMethod    String          @db.VarChar(80)
+  signatureEvidenceHash String       @db.VarChar(64)
+  agreement          MemberAgreement @relation(fields: [memberAgreementId], references: [id], onDelete: Restrict)
+  signer             User            @relation("SignatureActor", fields: [signerUserId], references: [id], onDelete: Restrict)
+  @@index([memberAgreementId, signedAt])
+}
+
+model ChatConversation {
+  id          String           @id @default(uuid()) @db.Uuid
+  groupId     String?          @db.Uuid
+  type        ConversationType
+  createdAt   DateTime         @default(now())
+  group       Group?           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  participants ChatParticipant[]
+  messages    ChatMessage[]
+  @@index([groupId, type])
+}
+
+model ChatParticipant {
+  conversationId String           @db.Uuid
+  userId         String           @db.Uuid
+  joinedAt       DateTime         @default(now())
+  lastReadAt     DateTime?
+  conversation   ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user           User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([conversationId, userId])
+  @@index([userId])
+}
+
+model ChatMessage {
+  id               String         @id @default(uuid()) @db.Uuid
+  conversationId   String         @db.Uuid
+  senderUserId     String         @db.Uuid
+  clientMessageId  String         @db.Uuid
+  bodyCiphertext   String         @db.Text
+  deliveryStatus   DeliveryStatus @default(SENT)
+  createdAt        DateTime       @default(now())
+  conversation     ChatConversation @relation(fields: [conversationId], references: [id], onDelete: Restrict)
+  sender           User           @relation("MessageSender", fields: [senderUserId], references: [id], onDelete: Restrict)
+  @@unique([conversationId, clientMessageId])
+  @@index([conversationId, createdAt])
+}
+
+model Notification {
+  id          String           @id @default(uuid()) @db.Uuid
+  userId      String           @db.Uuid
+  type        NotificationType
+  title       String           @db.VarChar(160)
+  body        String           @db.VarChar(500)
+  metadata    Json?
+  readAt      DateTime?
+  createdAt   DateTime         @default(now())
+  user        User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, readAt, createdAt])
+}
+
+model SecurityEvent {
+  id           String              @id @default(uuid()) @db.Uuid
+  subjectUserId String?            @db.Uuid
+  type         String              @db.VarChar(100)
+  severity     SecuritySeverity
+  status       SecurityEventStatus @default(OPEN)
+  ipHash       String?             @db.VarChar(64)
+  metadata     Json?
+  detectedAt   DateTime            @default(now())
+  resolvedAt   DateTime?
+  subject      User?               @relation("SecuritySubject", fields: [subjectUserId], references: [id], onDelete: SetNull)
+  @@index([status, severity, detectedAt])
+  @@index([subjectUserId, detectedAt])
+}
+
+model AuditLog {
+  id                String   @id @default(uuid()) @db.Uuid
+  actorUserId       String?  @db.Uuid
+  actorRoleSnapshot String?  @db.VarChar(100)
+  action            String   @db.VarChar(120)
+  targetType        String   @db.VarChar(80)
+  targetId          String?  @db.Uuid
+  outcome           String   @db.VarChar(20)
+  requestId         String?  @db.Uuid
+  sourceIpHash      String?  @db.VarChar(64)
+  beforeJson        Json?
+  afterJson         Json?
+  reason            String?  @db.VarChar(255)
+  previousHash      String?  @db.VarChar(64)
+  entryHash         String   @unique @db.VarChar(64)
+  occurredAt        DateTime @default(now())
+  actor             User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  @@index([occurredAt])
+  @@index([actorUserId, occurredAt])
+  @@index([targetType, targetId, occurredAt])
+}
+
+model Report {
+  id            String       @id @default(uuid()) @db.Uuid
+  requestedById String       @db.Uuid
+  groupId       String?      @db.Uuid
+  type          String       @db.VarChar(60)
+  format        String       @db.VarChar(10)
+  filters       Json?
+  status        ReportStatus @default(REQUESTED)
+  fileAssetId   String?      @unique @db.Uuid
+  expiresAt     DateTime?
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+  @@index([requestedById, status])
+  @@index([groupId, status])
+}

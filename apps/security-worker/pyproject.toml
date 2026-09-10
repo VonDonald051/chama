@@ -1,0 +1,9 @@
+[project]
+name = "chama-security-worker"
+version = "0.1.0"
+description = "Read-only event analysis for the Chama Platform"
+requires-python = ">=3.12"
+dependencies = ["asyncpg>=0.30.0"]
+
+[tool.ruff]
+line-length = 100
