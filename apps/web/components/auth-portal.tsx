@@ -1,6 +1,9 @@
 'use client';
 
+import { useClerk } from '@clerk/nextjs';
+import { useQuery } from 'convex/react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { api } from '../../../convex/_generated/api';
 
 type Mode = 'sign-in' | 'sign-up';
 type IdentifierMode = 'email' | 'mobile';
@@ -71,6 +74,8 @@ function PortalArtwork() {
 }
 
 export function AuthPortal() {
+  const { openSignIn, openSignUp } = useClerk();
+  const portal = useQuery(api.portal.getConfiguration);
   const [mode, setMode] = useState<Mode>('sign-in');
   const [identifierMode, setIdentifierMode] = useState<IdentifierMode>('email');
   const [showPassword, setShowPassword] = useState(false);
@@ -83,14 +88,7 @@ export function AuthPortal() {
   const [mfaUri, setMfaUri] = useState('');
   const [form, setForm] = useState({ identifier: '', invitation: '', password: '', confirmation: '' });
 
-  useEffect(() => {
-    let subscribed = true;
-    void fetch('/api/v1/public/portal', { credentials: 'include' })
-      .then((response) => response.ok ? response.json() as Promise<{ systemName?: string }> : null)
-      .then((data) => { if (subscribed && data?.systemName) setSystemName(data.systemName); })
-      .catch(() => undefined);
-    return () => { subscribed = false; };
-  }, []);
+  useEffect(() => { if (portal?.systemName) setSystemName(portal.systemName); }, [portal]);
 
   const identifierLabel = identifierMode === 'email' ? 'Email address' : 'Mobile number';
   const identifierPlaceholder = identifierMode === 'email' ? 'Enter your email address' : 'Enter your mobile number';
@@ -122,6 +120,14 @@ export function AuthPortal() {
     event.preventDefault();
     if (mfaStage) return submitMfa(event);
     setNotice(null);
+    if (mode === 'sign-in') {
+      openSignIn();
+      return;
+    }
+    if (mode === 'sign-up') {
+      openSignUp();
+      return;
+    }
     if (mode === 'sign-up' && form.password !== form.confirmation) {
       setNotice({ tone: 'error', text: 'The passwords do not match.' }); return;
     }
