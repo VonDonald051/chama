@@ -1,33 +1,38 @@
-import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
 
-async function identityOrThrow(ctx: { auth: { getUserIdentity: () => Promise<{ subject: string; email?: string } | null> } }) {
-  const identity = await ctx.auth.getUserIdentity();
-  if (!identity) throw new Error("UNAUTHENTICATED");
-  return identity;
+async function getUserFromToken(ctx: any, token: string) {
+  const session = await ctx.db
+    .query("sessions")
+    .withIndex("by_token", (q: any) => q.eq("token", token))
+    .first();
+  if (!session || session.expiresAt <= Date.now()) throw new Error("UNAUTHENTICATED");
+  const user = await ctx.db.get(session.userId);
+  if (!user) throw new Error("UNAUTHENTICATED");
+  return user;
 }
 
 export const current = query({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await identityOrThrow(ctx);
-    return await ctx.db.query("members").withIndex("by_clerk_subject", (q) => q.eq("clerkSubject", identity.subject)).unique();
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getUserFromToken(ctx, args.token);
+    return await ctx.db.query("members").withIndex("by_user_id", (q) => q.eq("userId", user._id)).unique();
   },
 });
 
 export const acceptInvitation = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await identityOrThrow(ctx);
-    const email = identity.email?.toLowerCase();
+  args: { token: v.string() },
+  handler: async (ctx, args) => {
+    const user = await getUserFromToken(ctx, args.token);
+    const email = user.email?.toLowerCase();
     if (!email) throw new Error("IDENTITY_EMAIL_REQUIRED");
-    const existing = await ctx.db.query("members").withIndex("by_clerk_subject", (q) => q.eq("clerkSubject", identity.subject)).unique();
+    const existing = await ctx.db.query("members").withIndex("by_user_id", (q) => q.eq("userId", user._id)).first();
     if (existing) return existing._id;
     const invitation = await ctx.db.query("invitations").withIndex("by_email_status", (q) => q.eq("email", email).eq("status", "PENDING")).first();
     if (!invitation || invitation.expiresAt <= Date.now()) throw new Error("INVITATION_REQUIRED");
-    const memberId = await ctx.db.insert("members", { clerkSubject: identity.subject, email, status: "ACTIVE", role: invitation.role, createdAt: Date.now() });
+    const memberId = await ctx.db.insert("members", { userId: user._id, email, status: "ACTIVE", role: invitation.role, createdAt: Date.now() });
     await ctx.db.patch(invitation._id, { status: "ACCEPTED" });
-    await ctx.db.insert("auditEvents", { actorSubject: identity.subject, action: "INVITATION_ACCEPTED", targetType: "INVITATION", outcome: "SUCCESS", createdAt: Date.now() });
+    await ctx.db.insert("auditEvents", { actorUserId: user._id, action: "INVITATION_ACCEPTED", targetType: "INVITATION", outcome: "SUCCESS", createdAt: Date.now() });
     return memberId;
   },
 });

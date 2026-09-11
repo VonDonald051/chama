@@ -9,13 +9,26 @@ export default defineSchema({
     maxActiveMembersPerGroup: v.number(),
     updatedAt: v.number(),
   }),
+  users: defineTable({
+    email: v.string(),
+    passwordHash: v.string(),
+    emailVerified: v.boolean(),
+    role: v.union(v.literal("OWNER"), v.literal("ADMIN"), v.literal("MEMBER")),
+    status: v.union(v.literal("ACTIVE"), v.literal("SUSPENDED")),
+    createdAt: v.number(),
+  }).index("by_email", ["email"]),
+  sessions: defineTable({
+    token: v.string(),
+    userId: v.id("users"),
+    expiresAt: v.number(),
+  }).index("by_token", ["token"]),
   members: defineTable({
-    clerkSubject: v.string(),
+    userId: v.id("users"),
     email: v.optional(v.string()),
     status: v.union(v.literal("INVITED"), v.literal("ACTIVE"), v.literal("SUSPENDED")),
     role: v.union(v.literal("OWNER"), v.literal("ADMIN"), v.literal("MEMBER")),
     createdAt: v.number(),
-  }).index("by_clerk_subject", ["clerkSubject"]),
+  }).index("by_user_id", ["userId"]),
   invitations: defineTable({
     email: v.string(),
     role: v.union(v.literal("OWNER"), v.literal("ADMIN"), v.literal("MEMBER")),
@@ -43,7 +56,7 @@ export default defineSchema({
     createdAt: v.number(),
   }).index("by_member_group", ["memberId", "groupId"]),
   auditEvents: defineTable({
-    actorSubject: v.optional(v.string()),
+    actorUserId: v.optional(v.id("users")),
     action: v.string(),
     targetType: v.string(),
     outcome: v.union(v.literal("SUCCESS"), v.literal("FAILURE")),

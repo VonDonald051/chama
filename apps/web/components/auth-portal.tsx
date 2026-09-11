@@ -1,8 +1,8 @@
 'use client';
 
-import { useClerk } from '@clerk/nextjs';
 import { useQuery } from 'convex/react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { useAuth } from './auth-context';
 import { api } from '../../../convex/_generated/api';
 
 type Mode = 'sign-in' | 'sign-up';
@@ -16,7 +16,7 @@ function LockIcon() {
   return <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="5.2" y="10.4" width="13.6" height="10" rx="2" fill="none" stroke="currentColor" strokeWidth="1.7"/><path d="M8.2 10.4V7.7a3.8 3.8 0 0 1 7.6 0v2.7" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg>;
 }
 function EyeIcon({ visible }: { visible: boolean }) {
-  return visible ? <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 3 21 21M10.6 10.8a2 2 0 0 0 2.7 2.7M9.8 5.2A11 11 0 0 1 12 5c5.3 0 8.6 5.1 8.6 7s-1.3 3.5-3.2 4.8M6.1 6.2C3.9 7.8 3.4 10.3 3.4 12c0 1.9 3.3 7 8.6 7 .9 0 1.8-.1 2.6-.4" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg> : <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3.4 12S6.7 5 12 5s8.6 5.1 8.6 7-3.3 7-8.6 7S3.4 13.9 3.4 12Z" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg>;
+  return visible ? <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3.3 12S6.7 5 12 5s8.6 5.1 8.6 7-3.3 7-8.6 7S3.4 13.9 3.4 12Z" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg> : <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3.4 12S6.7 5 12 5s8.6 5.1 8.6 7-3.3 7-8.6 7S3.4 13.9 3.4 12Z" fill="none" stroke="currentColor" strokeWidth="1.7"/><circle cx="12" cy="12" r="2.8" fill="none" stroke="currentColor" strokeWidth="1.7"/></svg>;
 }
 function DeviceIcon() {
   return <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="6.2" y="2.9" width="11.6" height="18.2" rx="2" fill="none" stroke="currentColor" strokeWidth="1.55"/><path d="M10 18.1h4" stroke="currentColor" strokeWidth="1.55" strokeLinecap="round"/></svg>;
@@ -74,102 +74,82 @@ function PortalArtwork() {
 }
 
 export function AuthPortal() {
-  const { openSignIn, openSignUp } = useClerk();
+  const { login, signup, logout, isAuthenticated, token, user } = useAuth();
   const portal = useQuery(api.portal.getConfiguration);
   const [mode, setMode] = useState<Mode>('sign-in');
-  const [identifierMode, setIdentifierMode] = useState<IdentifierMode>('email');
-  const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
   const [systemName, setSystemName] = useState('Secure Chama Portal');
-  const [mfaStage, setMfaStage] = useState<'enroll' | 'verify' | null>(null);
-  const [csrfToken, setCsrfToken] = useState('');
-  const [mfaCode, setMfaCode] = useState('');
-  const [mfaUri, setMfaUri] = useState('');
   const [form, setForm] = useState({ identifier: '', invitation: '', password: '', confirmation: '' });
 
   useEffect(() => { if (portal?.systemName) setSystemName(portal.systemName); }, [portal]);
 
-  const identifierLabel = identifierMode === 'email' ? 'Email address' : 'Mobile number';
-  const identifierPlaceholder = identifierMode === 'email' ? 'Enter your email address' : 'Enter your mobile number';
-  const passwordScore = useMemo(() => [form.password.length >= 12, /[a-z]/.test(form.password), /[A-Z]/.test(form.password), /\d/.test(form.password), /[^\w\s]/.test(form.password)].filter(Boolean).length, [form.password]);
-
   const switchMode = (next: Mode) => {
-    setMode(next); setNotice(null); setMfaStage(null); setMfaCode(''); setMfaUri(''); setForm({ identifier: '', invitation: '', password: '', confirmation: '' });
+    setMode(next); setNotice(null); setForm({ identifier: '', invitation: '', password: '', confirmation: '' });
   };
   const update = (key: keyof typeof form, value: string) => setForm((previous) => ({ ...previous, [key]: value }));
 
-  async function submitMfa(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!mfaStage || !csrfToken) return;
-    setNotice(null); setBusy(true);
-    try {
-      const response = await fetch('/api/v1/auth/mfa/verify', { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json', 'x-csrf-token': csrfToken }, body: JSON.stringify({ code: mfaCode }) });
-      if (response.status === 204) {
-        setMfaStage(null); setMfaCode('');
-        setNotice({ tone: 'success', text: 'MFA verified. Your secure session is established.' });
-        return;
-      }
-      const payload = await response.json().catch(() => ({ error: 'SERVICE_UNAVAILABLE' })) as { error?: string };
-      setNotice({ tone: 'error', text: payload.error === 'INVALID_MFA_CODE' ? 'That verification code is not valid. Try the current code from your authenticator.' : 'We could not verify that code securely.' });
-    } catch { setNotice({ tone: 'error', text: 'Secure verification is not available right now. Please try again shortly.' }); }
-    finally { setBusy(false); }
-  }
-
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (mfaStage) return submitMfa(event);
     setNotice(null);
     if (mode === 'sign-in') {
-      openSignIn();
+      setBusy(true);
+      try {
+        await login(form.identifier, form.password);
+        setNotice({ tone: 'success', text: 'Signed in securely.' });
+      } catch (e: any) {
+        const messages: Record<string, string> = {
+          INVALID_CREDENTIALS: 'We could not sign you in with those details.',
+          ACCOUNT_SUSPENDED: 'This account is suspended.',
+          SERVICE_UNAVAILABLE: 'Secure sign-in is not available right now. Please try again shortly.',
+        };
+        setNotice({ tone: 'error', text: messages[e?.message ?? ''] ?? 'We could not complete that request securely.' });
+      } finally { setBusy(false); }
       return;
     }
     if (mode === 'sign-up') {
-      openSignUp();
+      if (form.password !== form.confirmation) {
+        setNotice({ tone: 'error', text: 'The passwords do not match.' }); return;
+      }
+      setBusy(true);
+      try {
+        await signup(form.identifier, form.password);
+        setNotice({ tone: 'success', text: 'Your account is activated. You can now sign in securely.' });
+        setMode('sign-in'); setForm({ identifier: '', invitation: '', password: '', confirmation: '' });
+      } catch (e: any) {
+        const messages: Record<string, string> = {
+          EMAIL_EXISTS: 'An account with this email already exists.',
+          SERVICE_UNAVAILABLE: 'Secure sign-up is not available right now. Please try again shortly.',
+        };
+        setNotice({ tone: 'error', text: messages[e?.message ?? ''] ?? 'We could not complete that request securely.' });
+      } finally { setBusy(false); }
       return;
     }
-    if (mode === 'sign-up' && form.password !== form.confirmation) {
-      setNotice({ tone: 'error', text: 'The passwords do not match.' }); return;
-    }
-    if (mode === 'sign-up' && passwordScore < 4) {
-      setNotice({ tone: 'error', text: 'Use at least 12 characters with upper/lowercase, a number and a symbol.' }); return;
-    }
-    setBusy(true);
-    try {
-      const endpoint = mode === 'sign-in' ? '/api/v1/auth/login' : '/api/v1/auth/invitations/activate';
-      const body = mode === 'sign-in'
-        ? { identifier: form.identifier, password: form.password }
-        : { token: form.invitation.trim(), password: form.password };
-      const response = await fetch(endpoint, { method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-      if (response.status === 204) {
-        setNotice({ tone: 'success', text: 'Your account is activated. You can now sign in securely.' });
-        setMode('sign-in'); setForm({ identifier: '', invitation: '', password: '', confirmation: '' }); return;
-      }
-      const payload = await response.json().catch(() => ({ error: 'SERVICE_UNAVAILABLE' })) as { error?: string; mfaEnrollmentRequired?: boolean; mfaRequired?: boolean; csrfToken?: string };
-      if (response.ok && payload.mfaRequired && payload.csrfToken) {
-        setCsrfToken(payload.csrfToken);
-        if (payload.mfaEnrollmentRequired) {
-          const enrolment = await fetch('/api/v1/auth/mfa/totp/enroll', { method: 'POST', credentials: 'include', headers: { 'x-csrf-token': payload.csrfToken } });
-          const enrolmentData = await enrolment.json().catch(() => ({})) as { otpauthUri?: string };
-          if (!enrolment.ok || !enrolmentData.otpauthUri) throw new Error('MFA_ENROLLMENT_UNAVAILABLE');
-          setMfaUri(enrolmentData.otpauthUri); setMfaStage('enroll');
-          setNotice({ tone: 'info', text: 'Add this one-time secure key to your authenticator, then enter its 6-digit code.' });
-        } else {
-          setMfaStage('verify');
-          setNotice({ tone: 'info', text: 'Enter the current 6-digit code from your authenticator.' });
-        }
-        return;
-      }
-      const messages: Record<string, string> = {
-        INVALID_CREDENTIALS: 'We could not sign you in with those details.',
-        INVALID_OR_EXPIRED_INVITATION: 'This invitation is invalid, expired, or has already been used.',
-        RATE_LIMITED: 'Too many attempts. Please wait before trying again.',
-        SERVICE_UNAVAILABLE: 'Secure sign-in is not available right now. Please try again shortly.',
-      };
-      setNotice({ tone: 'error', text: messages[payload.error ?? ''] ?? 'We could not complete that request securely.' });
-    } catch {
-      setNotice({ tone: 'error', text: 'Secure sign-in is not available right now. Please try again shortly.' });
-    } finally { setBusy(false); }
+  }
+
+  if (isAuthenticated && user) {
+    return (
+      <main className="portal-shell">
+        <div className="texture texture-one" aria-hidden="true"/><div className="texture texture-two" aria-hidden="true"/>
+        <section className="brand-panel" aria-label={`${systemName} access portal`}>
+          <div className="toolkit"><span className="toolkit-mark"/><span>{systemName}</span></div>
+          <div className="headline"><p><em>Simple</em> Web</p><p><b>Login <span>&amp;</span> Secure</b></p><p><b><span>Access</span> Page</b></p></div>
+          <div className="figma-line"><span className="figma-mark"><i/><i/><i/><i/><i/></span><strong>Chama</strong><small>Secure member platform</small></div>
+          <p className="brand-note">Private access for invited members and authorized staff.</p>
+        </section>
+        <section className="portal-card" aria-label="Account access">
+          <PortalArtwork />
+          <div className="form-side">
+            <div className="form-inner">
+              <div className="mobile-brand">{systemName}</div>
+              <header className="form-heading"><h1>Welcome back!</h1><p>Your account is protected.</p></header>
+              <p className="notice success" role="status">Signed in as {user.email}</p>
+              <button className="continue" onClick={() => logout()}>Sign out</button>
+            </div>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -177,7 +157,7 @@ export function AuthPortal() {
       <div className="texture texture-one" aria-hidden="true"/><div className="texture texture-two" aria-hidden="true"/>
       <section className="brand-panel" aria-label={`${systemName} access portal`}>
         <div className="toolkit"><span className="toolkit-mark"/><span>{systemName}</span></div>
-        <div className="headline"><p><em>Simple</em> Web</p><p><b>{mode === 'sign-in' ? 'Login' : 'Sign'} <span>&amp;</span> {mode === 'sign-in' ? 'Secure' : 'Set'}</b></p><p><b><span>{mode === 'sign-in' ? 'Access' : 'up'}</span> Page</b></p></div>
+        <div className="headline"><p><em>Simple</em> Web</p><p><b>Login <span>&amp;</span> Secure</b></p><p><b><span>Access</span> Page</b></p></div>
         <div className="figma-line"><span className="figma-mark"><i/><i/><i/><i/><i/></span><strong>Chama</strong><small>Secure member platform</small></div>
         <p className="brand-note">Private access for invited members and authorized staff.</p>
       </section>
@@ -193,27 +173,17 @@ export function AuthPortal() {
               <button type="button" role="tab" aria-selected={mode === 'sign-up'} className={mode === 'sign-up' ? 'selected' : ''} onClick={() => switchMode('sign-up')}>Sign up</button>
             </div>
             <form onSubmit={submit} noValidate>
-              {mfaStage ? <>
-                <p className="mfa-kicker">Two-step verification</p>
-                {mfaStage === 'enroll' && <label className="field"><span className="field-label">One-time authenticator link</span><span className="field-box mfa-uri"><input value={mfaUri} readOnly aria-label="One-time authenticator setup link"/><button className="copy" type="button" onClick={() => void navigator.clipboard?.writeText(mfaUri)}>Copy</button></span></label>}
-                <p className="mfa-help">{mfaStage === 'enroll' ? 'Open the copied link in a compatible authenticator, or add it manually. This setup link is only shown in this protected session.' : 'Use the current code in your authenticator app.'}</p>
-                <label className="field"><span className="field-label">6-digit verification code</span><span className="field-box"><LockIcon/><input value={mfaCode} onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" autoComplete="one-time-code" inputMode="numeric" pattern="[0-9]{6}" required /></span></label>
-              </> : <>
-                {mode === 'sign-in' ? <>
-                  <div className="identity-tabs" role="tablist" aria-label="Sign in identifier">
-                    <button type="button" role="tab" aria-selected={identifierMode === 'email'} className={identifierMode === 'email' ? 'selected' : ''} onClick={() => setIdentifierMode('email')}>E-mail</button>
-                    <button type="button" role="tab" aria-selected={identifierMode === 'mobile'} className={identifierMode === 'mobile' ? 'selected' : ''} onClick={() => setIdentifierMode('mobile')}>Mobile Number</button>
-                  </div>
-                  <label className="field"><span className="field-label">{identifierLabel}</span><span className="field-box"><MailIcon/><input value={form.identifier} onChange={(e) => update('identifier', e.target.value)} placeholder={identifierPlaceholder} autoComplete={identifierMode === 'email' ? 'username' : 'tel'} inputMode={identifierMode === 'email' ? 'email' : 'tel'} required /></span></label>
-                </> : <label className="field"><span className="field-label">Invitation code</span><span className="field-box"><DeviceIcon/><input value={form.invitation} onChange={(e) => update('invitation', e.target.value)} placeholder="Paste your secure invitation code" autoComplete="one-time-code" required /></span></label>}
-                <label className="field"><span className="field-label">Password</span><span className="field-box"><LockIcon/><input value={form.password} onChange={(e) => update('password', e.target.value)} type={showPassword ? 'text' : 'password'} placeholder={mode === 'sign-in' ? 'Enter your password' : 'Create a strong password'} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} required minLength={12}/><button type="button" className="eye" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword(!showPassword)}><EyeIcon visible={showPassword}/></button></span></label>
-                {mode === 'sign-up' && <><div className="strength" aria-label={`Password strength ${passwordScore} of 5`}><i className={passwordScore >= 1 ? 'on' : ''}/><i className={passwordScore >= 2 ? 'on' : ''}/><i className={passwordScore >= 3 ? 'on' : ''}/><i className={passwordScore >= 4 ? 'on' : ''}/><i className={passwordScore >= 5 ? 'on' : ''}/></div><label className="field"><span className="field-label">Confirm password</span><span className="field-box"><LockIcon/><input value={form.confirmation} onChange={(e) => update('confirmation', e.target.value)} type={showPassword ? 'text' : 'password'} placeholder="Repeat your password" autoComplete="new-password" required minLength={12}/></span></label></>}
-                {mode === 'sign-in' && <button type="button" className="forgot" onClick={() => setNotice({ tone: 'info', text: 'Password recovery is available from your registered support channel.' })}>Forgot password?</button>}
-              </>}
+              {mode === 'sign-in' ? (
+                <label className="field"><span className="field-label">Email address</span><span className="field-box"><MailIcon/><input value={form.identifier} onChange={(e) => update('identifier', e.target.value)} placeholder="Enter your email address" autoComplete="username" inputMode="email" required /></span></label>
+              ) : (
+                <label className="field"><span className="field-label">Invitation code</span><span className="field-box"><DeviceIcon/><input value={form.invitation} onChange={(e) => update('invitation', e.target.value)} placeholder="Paste your secure invitation code" autoComplete="one-time-code" required /></span></label>
+              )}
+              <label className="field"><span className="field-label">Password</span><span className="field-box"><LockIcon/><input value={form.password} onChange={(e) => update('password', e.target.value)} type="password" placeholder={mode === 'sign-in' ? 'Enter your password' : 'Create a strong password'} autoComplete={mode === 'sign-in' ? 'current-password' : 'new-password'} required minLength={12}/></span></label>
+              {mode === 'sign-up' && <label className="field"><span className="field-label">Confirm password</span><span className="field-box"><LockIcon/><input value={form.confirmation} onChange={(e) => update('confirmation', e.target.value)} type="password" placeholder="Repeat your password" autoComplete="new-password" required minLength={12}/></span></label>}
               {notice && <p className={`notice ${notice.tone}`} role="status">{notice.text}</p>}
-              <button className="continue" disabled={busy} type="submit">{busy ? 'Please wait…' : mfaStage ? 'Verify secure code' : mode === 'sign-in' ? 'Continue' : 'Activate secure account'}</button>
+              <button className="continue" disabled={busy} type="submit">{busy ? 'Please wait…' : mode === 'sign-in' ? 'Continue' : 'Activate secure account'}</button>
             </form>
-            <div className="security-strip"><span><LockIcon/> Encrypted session</span><span><DeviceIcon/> MFA for staff</span></div>
+            <div className="security-strip"><span><LockIcon/> Encrypted session</span></div>
             <p className="account-switch">{mode === 'sign-in' ? <>Have an invitation? <button type="button" onClick={() => switchMode('sign-up')}>Sign up</button></> : <>Already activated? <button type="button" onClick={() => switchMode('sign-in')}>Sign in</button></>}</p>
             <p className="privacy">By continuing, you acknowledge the platform privacy notice. Never share your invitation code or password.</p>
           </div>
