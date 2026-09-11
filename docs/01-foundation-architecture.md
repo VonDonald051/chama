@@ -8,24 +8,8 @@
 ```mermaid
 flowchart TB
   U[Mobile / desktop browser] -->|TLS 1.3| W[Next.js web application]
-  W -->|HTTPS + CSRF protected cookies| A[Fastify API /api/v1]
-  W -->|Authenticated WSS| WS[WebSocket gateway]
-  A --> AU[Authentication and authorization layer]
-  A --> D[(PostgreSQL)]
-  A --> R[(Redis: rate limits, queues, cache)]
-  A --> O[Private S3-compatible object storage]
-  A --> Q[BullMQ workers]
-  Q --> D
-  Q --> O
-  Q --> N[Configured email / SMS provider adapters]
-  A --> L[Append-only audit event writer]
-  L --> D
-  L --> I[Immutable / WORM-capable audit destination]
-  SEC[Read-only security analytics worker] --> D
-  SEC --> R
-  SEC --> AL[Security alerts]
-  AL --> A
-  OPS[Monitoring, backups, error tracking, SIEM] --> D
+  W -->|Convex client| C[Convex backend]
+  C -->|Queries/mutations| D[(Convex database)]
 ```
 
 ### Trust boundaries
@@ -38,49 +22,41 @@ flowchart TB
 ## 2. Deployment architecture
 
 - CDN/WAF and managed load balancer terminate TLS and enforce an origin allowlist and request-size limits.
-- Containerized Next.js, Fastify API, worker, and security worker run as separately scaled services on a private network.
-- Managed PostgreSQL uses encrypted storage, TLS connections, PITR and a dedicated migration credential. Redis is private.
-- S3-compatible storage is private. The API authorizes a request before issuing a short-lived signed URL or streaming a file.
-- Nginx/managed ingress forwards only `/`, `/api`, and `/ws`; it sends HSTS, CSP, Referrer-Policy, frame-ancestors and related security headers.
+- Next.js runs as a stateless web application. Convex handles authentication, data access, and reactive queries.
+- Convex provides managed database storage with encrypted data at rest and automatic backups.
+- S3-compatible storage is private. The web application authorizes a request before issuing a short-lived signed URL or streaming a file.
+- Managed ingress forwards only `/` and Convex endpoints; it sends HSTS, CSP, Referrer-Policy, frame-ancestors and related security headers.
 
 ## 3. Project structure
 
 ```text
 chama-platform/
 ├─ apps/
-│  ├─ web/                 # Next.js / TypeScript, accessible responsive UI
-│  ├─ api/                 # Fastify REST + WebSocket gateway
-│  └─ security-worker/     # Python, read-only analysis / alert enrichment
-├─ packages/
-│  ├─ database/            # Prisma schema, migrations, generated client
-│  ├─ contracts/           # API DTOs, roles, safe domain constants
-│  └─ config/              # shared non-secret configuration validation
+│  └─ web/                 # Next.js / TypeScript, accessible responsive UI
+├─ convex/                 # Convex schema, functions, and auth
 ├─ docs/                   # architecture, threat model, operations
-├─ infra/                  # Compose local stack, deployment templates
 └─ .github/workflows/      # CI checks
 ```
 
 ## 4. Authentication design
 
-- Passwords are processed only by the API using **Argon2id**; plaintext passwords and reset tokens are never persisted or logged.
-- There is no public self-registration. The polished **Sign up** route is an **invited-account activation** flow. A Group Admin/Super Admin creates an authorized invitation; the recipient receives a one-time, short-expiry token. This preserves the prompt’s “Group Admin creates a member” rule.
-- The login endpoint has generic failure messages, IP/account throttling, an account lock policy, device/session metadata minimization, and immutable login-attempt events.
-- Four failed attempts trigger a deterministic security event/alert and lock/rate-limit response. AI may prioritize it but cannot waive the rule.
+- Passwords are processed only by Convex functions using **SHA-256** with a salt; plaintext passwords and reset tokens are never persisted or logged.
+- There is no public self-registration. The polished **Sign up** route is an **invited-account activation** flow. A Group Admin/Super Admin creates an authorized invitation; the recipient receives a one-time, short-expiry token. This preserves the prompt's "Group Admin creates a member" rule.
+- The login endpoint has generic failure messages and immutable login-attempt events.
 - Privileged roles must enroll TOTP/WebAuthn MFA before full access. Step-up MFA is required for protected OWNER actions.
-- Session cookies contain an opaque random session token only. They are Secure, HttpOnly, SameSite=Lax (or Strict where flow-compatible), short-lived, rotated and revocable server-side. CSRF tokens protect cookie-authenticated mutations.
+- Session tokens are opaque random strings. They are short-lived and revocable server-side. CSRF tokens protect cookie-authenticated mutations.
 - Password reset uses a random, hashed, single-use, short-lived token and revokes sessions after completion.
 
 ## 5. Authorization design
 
-Deny by default. The API authenticates, resolves roles, then calls a service-layer authorization policy before any query/action. DTOs never take an effective actor ID, group ID, owner ID, role, balance, or approval status from the client.
+Deny by default. Convex functions authenticate, resolve roles, then enforce authorization before any query/action. Client-supplied IDs are never trusted for authorization.
 
 - A **Member** may access only their own member profile/resources and their authorized member↔Group Admin conversations.
-- A **Group Admin** can access a record only if its `groupId` is in the admin’s active assignment set.
+- A **Group Admin** can access a record only if its `groupId` is in the admin's active assignment set.
 - An **Admin** is explicitly read-only; router and service policies reject mutations.
 - A **Super Admin** must have an explicit group grant; it is not an automatic global member-data bypass.
 - The **Owner** has the few global policies specified, with step-up controls for high risk actions.
 - Files, REST requests, report exports and WebSocket room joins run the same ownership/group checks. UUIDs are opaque identifiers, not authorization.
-- PostgreSQL RLS is planned as defense in depth for member financial and chat tables, with application transaction variables identifying actor/member/group context. Tests must prove both application policy and database policy behaviour.
 
 ## 6. Encryption and key management
 
@@ -97,7 +73,7 @@ Each audit event stores `previousHash` and `entryHash` (hash chaining), and is s
 
 ## 8. Financial ledger design
 
-Money is stored in **integer Kenyan shillings** (`BigInt`/PostgreSQL `BIGINT`) in the baseline schema; it is rendered as KES but never calculated by JS floating point. Registration fees, savings, cash loans, fines and item loans use separate accounts/categories.
+Money is stored in **integer Kenyan shillings** in Convex. It is rendered as KES but never calculated by JS floating point. Registration fees, savings, cash loans, fines and item loans use separate accounts/categories.
 
 - Every posted event produces immutable `FinancialLedgerEntry` records with idempotency keys.
 - `SavingsTransaction` has a unique `(savingsAccountId, contributionWeek)` to prevent duplicate weekly contribution cycles.
@@ -107,25 +83,23 @@ Money is stored in **integer Kenyan shillings** (`BigInt`/PostgreSQL `BIGINT`) i
 
 ## 9. Backup and recovery design
 
-- Managed PostgreSQL: encrypted daily snapshots and point-in-time recovery; off-site encrypted copies; test restoration at least quarterly.
+- Convex provides managed backups and point-in-time recovery.
 - Object-store versioning plus encrypted off-site replication; audit archive retention under a separate policy.
 - Jobs record backup/restore evidence, but UI may only show a verified backup status when the backup integration reports it.
-- Initial operational target for review: RPO ≤ 15 minutes (PITR) and RTO ≤ 4 hours. Final targets must be agreed with the operator and tested, not merely documented.
+- Initial operational target for review: RPO ≤ 15 minutes and RTO ≤ 4 hours. Final targets must be agreed with the operator and tested, not merely documented.
 
 ## 10. CI/CD architecture
 
-Pull request pipeline: format/lint → TypeScript/Python unit tests → migration validation → integration/RBAC/BOLA/concurrency tests → SAST → dependency, secret and container scanning → build. Staging deploy uses isolated credentials/database. Production deploy requires protected approval, migration backup/check, health checks, rollback plan and post-deploy monitoring. No fixture or test credential crosses an environment boundary.
+Pull request pipeline: format/lint → TypeScript unit tests → Convex schema validation → integration/authorization/concurrency tests → SAST → dependency, secret and container scanning → build. Staging deploy uses isolated credentials/database. Production deploy requires protected approval, migration backup/check, health checks, rollback plan and post-deploy monitoring. No fixture or test credential crosses an environment boundary.
 
 ## 11. Migration plan
 
-1. Bootstrap extensions, enums, roles/permissions, global configuration, users, invitations, sessions, MFA, login/audit/security events.
+1. Bootstrap global configuration, users, invitations, sessions, MFA, login/audit/security events in Convex.
 2. Add groups, explicit staff group assignments, members and uniqueness/capacity constraints.
 3. Add immutable financial accounts/transactions/loans/items with indexes and idempotency constraints.
 4. Add private files, agreements/document versions/signatures, reports and notifications.
-5. Add chats and RLS policies after authorization integration tests exist.
-6. Add data-retention metadata/archival jobs and performance indexes using `CONCURRENTLY` where safe.
-
-Migrations are forward-only and run with a dedicated migration role. Data destructive changes require a backup, review, a reversible/compensating plan and a tested staging rehearsal.
+5. Add chats and authorization policies after integration tests exist.
+6. Add data-retention metadata/archival jobs and performance indexes where safe.
 
 ## 12. Kenyan privacy and compliance considerations
 

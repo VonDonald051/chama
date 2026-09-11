@@ -10,7 +10,7 @@ A security-first Kenyan Chama management system foundation. This repository cont
 - Convex mutations `auth.signup`, `auth.login`, `auth.logout`, `auth.me` — custom session-based authentication with SHA-256 password hashing, token sessions, and member record creation.
 - Convex queries/mutations `members.current`, `members.acceptInvitation` — member lifecycle and invitation acceptance.
 - Convex queries `finance.ownSavings`, `portal.getConfiguration` — group-scoped savings reads and system configuration.
-- Prisma PostgreSQL schema with isolated financial categories, append-only ledger/audit model and security/session entities.
+- Convex tables for groups, memberships, savings, cash loans, items, ledger, chat, notifications, agreements, reports and audit events.
 
 ## Documentation (written before application implementation)
 
@@ -22,18 +22,16 @@ A security-first Kenyan Chama management system foundation. This repository cont
 
 ### 1. Prerequisites
 
-Node 20+, PostgreSQL 16+, Redis and private S3-compatible storage. Copy `.env.example` to an untracked `.env` and replace every placeholder with development-only values. Do **not** re-use development secrets in any other environment.
+Node 20+ and a Convex account. Copy `.env.example` to an untracked `.env` and replace the placeholder Convex deployment values with development-only values. Do **not** re-use development secrets in any other environment.
 
 ```bash
 cp .env.example .env
 npm install
-npm run db:validate
-npm run db:generate
 ```
 
 ### Convex development deployment
 
-Convex is configured as an additional backend integration for authentication and reactive queries. The existing Prisma/PostgreSQL database remains the system of record for the financial model.
+Convex is the backend for authentication, data, and reactive queries.
 
 ```bash
 npm run convex:dev
@@ -57,40 +55,20 @@ NEXT_PUBLIC_CONVEX_URL=https://<deployment>.convex.cloud
 NEXT_PUBLIC_CONVEX_SITE_URL=https://<deployment>.convex.site
 ```
 
-Never add `DATABASE_URL`, session secrets, encryption keys, object-storage credentials, or provider keys to the Vercel web project. Those belong only to the backend runtime. The browser calls relative `/api/*` paths and Next.js rewrites them server-side to `API_INTERNAL_URL`.
+Never add session secrets, encryption keys, object-storage credentials, or provider keys to the Vercel web project. Those belong only to the backend runtime.
 
-### 2. Apply reviewed migrations
-
-The first migration must be generated/reviewed and committed from the Prisma schema; see [`packages/database/prisma/migrations/README.md`](packages/database/prisma/migrations/README.md). Never use `prisma db push` in staging/production. Apply deploy migrations with a dedicated migration database user.
+### 2. Run services
 
 ```bash
-npm run db:migrate:deploy
-```
-
-### 3. Controlled Owner bootstrap
-
-Only after migrations and through a protected operator terminal, create one activation invitation. This utility prints a one-time token but never creates or prints a password.
-
-```bash
-npx tsx apps/api/scripts/create-owner-invitation.ts owner@example.com "Your Configured System Name"
-```
-
-Deliver the token only via an approved secure channel. The Owner activates it at the Sign up screen, then completes normal login. The bootstrap exits if an Owner already exists.
-
-### 4. Run services
-
-```bash
-npm run dev:api
 npm run dev:web
 ```
 
-The browser always requests relative `/api/*` routes. Set `API_INTERNAL_URL` to a private API service for Next.js server-side rewrites; browser code never targets localhost for a separate service.
+The web app runs as a standalone Next.js application backed by Convex. No separate API service or database process is required.
 
 ## Security properties and operating requirements
 
-- No production secret is included. `AUDIT_HASH_KEY` and `FIELD_ENCRYPTION_KEY` must come from an approved secrets manager/KMS, separated by environment.
-- PostgreSQL, Redis and object storage must remain private; document storage must never use predictable public URLs.
-- Production requires TLS, a trusted proxy configuration, a strict origin allowlist, database TLS, backup/PITR configuration, restoration testing, monitoring and a WORM-capable audit destination.
+- No production secret is included. Keys must come from an approved secrets manager/KMS, separated by environment.
+- Production requires TLS, a trusted proxy configuration, a strict origin allowlist, backup configuration, restoration testing, monitoring and a WORM-capable audit destination.
 - All financial changes must be transactional, idempotent where retried and represented by separate immutable ledger categories. Corrections are reversals, not edits.
 - Test data, if later required, is isolated to dedicated test infrastructure and cannot be deployed to production.
 

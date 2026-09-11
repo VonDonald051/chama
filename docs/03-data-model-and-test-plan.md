@@ -77,7 +77,7 @@ erDiagram
 ## Test layers
 
 1. Unit: money operations using `BigInt`, password/session helpers, policy decisions.
-2. Integration: PostgreSQL migrations, constraints, RLS, Fastify handlers and worker idempotency.
+2. Integration: Convex functions, authorization policies, and idempotency tests.
 3. End-to-end: invitation activation, MFA, group lifecycle, private file access and reports.
 4. Security: OWASP-oriented SAST, DAST/pentest, dependency/secret/container scans, rate-limit/session/WebSocket and BOLA regression tests.
 5. Operational: backup restore rehearsal, alert delivery, load test, migration rehearsal and incident runbook exercise.

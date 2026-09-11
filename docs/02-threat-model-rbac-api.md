@@ -5,7 +5,7 @@
 | Asset / threat | Example attack | Required controls |
 |---|---|---|
 | Accounts | Credential stuffing, brute force, reset abuse | Argon2id, generic login errors, rate limits, 4-failure deterministic alert/lock policy, MFA, reset-token hashing, session revocation |
-| Member privacy | BOLA/IDOR by changing a member UUID | Server service policy, group/member query scope, DTO allowlists, file authorization, REST/WebSocket authorization tests, optional PostgreSQL RLS |
+| Member privacy | BOLA/IDOR by changing a member UUID | Server service policy, group/member query scope, DTO allowlists, file authorization, REST/WebSocket authorization tests |
 | Financial integrity | Parallel loan requests take >50% of savings | Serializable/appropriate transaction isolation, row locks, server recomputation, active-loan predicates, idempotency keys, concurrency test |
 | Financial history | Admin overwrites prior transaction | Append-only ledger, correction/reversal entries, audit hash chain, restricted database role |
 | Sessions | Cookie theft, CSRF, replay | TLS, HttpOnly/Secure/SameSite cookies, CSRF validation, token rotation/revocation, expiry, device/session management |
