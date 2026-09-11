@@ -2,15 +2,14 @@
 
 A security-first Kenyan Chama management system foundation. This repository contains no bundled user identities, pre-populated balances, simulated endpoints or public self-registration. The account-access page follows the supplied light/blue split-card visual direction, while the implementation retains financial-platform security boundaries.
 
-> **Current delivery status:** architecture, threat model, RBAC/API/WebSocket contracts, relational model, an initial Fastify authentication foundation, financial rule tests, security-worker boundary, local infrastructure and the responsive sign-in/invited-account activation UI. It is **not** a claim that the complete platform or external production services are production-ready. Complete the documented migrations, modules, provider adapters, operations and test gates before a production decision.
+> **Current delivery status:** architecture, threat model, RBAC/API/WebSocket contracts, relational model, Convex authentication with custom session management, financial rule tests, security-worker boundary, local infrastructure and the responsive sign-in/invited-account activation UI. It is **not** a claim that the complete platform or external production services are production-ready. Complete the documented migrations, modules, provider adapters, operations and test gates before a production decision.
 
 ## First implementation scope
 
 - `/` — responsive sign in / invited account setup. No public account creation is permitted; the Sign up panel activates a one-time authorized invitation.
-- `POST /api/v1/auth/login` — Argon2id password verification, generic failure response, rate limit, session creation, login audit and four-attempt rule-based security event.
-- `POST /api/v1/auth/invitations/activate` — expiring, single-use token activation with no permanent plaintext credential.
-- TOTP enrol/verification, session logout and CSRF/session middleware.
-- Secure scaffolding for own/explicit-group-scoped savings reads and group summary reads; no hard-coded financial values.
+- Convex mutations `auth.signup`, `auth.login`, `auth.logout`, `auth.me` — custom session-based authentication with SHA-256 password hashing, token sessions, and member record creation.
+- Convex queries/mutations `members.current`, `members.acceptInvitation` — member lifecycle and invitation acceptance.
+- Convex queries `finance.ownSavings`, `portal.getConfiguration` — group-scoped savings reads and system configuration.
 - Prisma PostgreSQL schema with isolated financial categories, append-only ledger/audit model and security/session entities.
 
 ## Documentation (written before application implementation)
@@ -34,7 +33,7 @@ npm run db:generate
 
 ### Convex development deployment
 
-Convex is configured as an additional backend integration. The existing Prisma/PostgreSQL database remains the system of record for the financial model; do not replace its reviewed migrations with an unreviewed Convex schema.
+Convex is configured as an additional backend integration for authentication and reactive queries. The existing Prisma/PostgreSQL database remains the system of record for the financial model.
 
 ```bash
 npm run convex:dev
@@ -46,15 +45,14 @@ This pushes the functions in `convex/` to the selected Convex development deploy
 npm run convex:push
 ```
 
+Authentication is handled via custom Convex auth functions (`convex/auth.ts`) with no external identity provider required. The `convex/auth.config.ts` file is not used.
+
 ### Vercel web environment
 
 Deploy `apps/web` as the Vercel project root. Configure these variables in the Vercel project for each applicable environment; `.env.local` is only for local Next.js builds and is intentionally ignored by Git.
 
 ```bash
-# A TLS-protected, publicly reachable Fastify API origin. Do not add a trailing slash.
-API_INTERNAL_URL=https://api.example.com
-
-# Public Convex endpoints for the matching Convex deployment, if the web app uses Convex.
+# Public Convex endpoints for the matching Convex deployment.
 NEXT_PUBLIC_CONVEX_URL=https://<deployment>.convex.cloud
 NEXT_PUBLIC_CONVEX_SITE_URL=https://<deployment>.convex.site
 ```
@@ -77,7 +75,7 @@ Only after migrations and through a protected operator terminal, create one acti
 npx tsx apps/api/scripts/create-owner-invitation.ts owner@example.com "Your Configured System Name"
 ```
 
-Deliver the token only via an approved secure channel. The Owner activates it at the Sign up screen, enrolls MFA, then completes normal login. The bootstrap exits if an Owner already exists.
+Deliver the token only via an approved secure channel. The Owner activates it at the Sign up screen, then completes normal login. The bootstrap exits if an Owner already exists.
 
 ### 4. Run services
 
